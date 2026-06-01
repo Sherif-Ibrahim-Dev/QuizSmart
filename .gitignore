@@ -1,0 +1,49 @@
+# ========================
+# Node.js / React Frontend
+# ========================
+node_modules/
+dist/
+build/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ========================
+# .NET / C# Backend
+# ========================
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.vs/
+.vs/
+*.DotSettings.user
+appsettings.Development.json
+*.db
+*.mdf
+*.ldf
+
+# ========================
+# IDE & Editor
+# ========================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ========================
+# Misc
+# ========================
+*.log
+*.tmp
+*.bak
+package-lock.json
