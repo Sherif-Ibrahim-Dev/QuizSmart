@@ -28,9 +28,16 @@ namespace QuizSmart.API.Controllers
                 .Select(en => en.CourseId)
                 .ToListAsync();
 
+            var completedExamIds = await _context.StudentAttempts
+                .Where(a => a.StudentId == studentId && a.SubmitDate != null)
+                .Select(a => a.ExamId)
+                .Distinct()
+                .ToListAsync();
+
             var exams = await _context.Exams
                 .AsNoTracking()
-                .Where(e => e.StartTime <= now && e.EndTime >= now && enrolledCourseIds.Contains(e.CourseId) && e.IsPublished)
+                .Where(e => e.StartTime <= now && e.EndTime >= now && enrolledCourseIds.Contains(e.CourseId) && e.IsPublished
+                    && !completedExamIds.Contains(e.ExamId))
                 .Select(e => new
                 {
                     e.ExamId,
@@ -53,22 +60,29 @@ namespace QuizSmart.API.Controllers
         [HttpGet("my-history/{studentId}")]
         public async Task<IActionResult> GetStudentHistory(int studentId)
         {
-            var history = await _context.StudentAttempts
+            var attempts = await _context.StudentAttempts
                 .AsNoTracking()
                 .Where(a => a.StudentId == studentId && a.SubmitDate != null)
                 .Include(a => a.Exam)
-                .OrderByDescending(a => a.SubmitDate)
-                .Select(a => new
-                {
-                    a.AttemptId,
-                    ExamTitle = a.Exam.Title,
-                    CourseCode = a.Exam.CourseId,
-                    Date = a.SubmitDate,
-                    Score = a.FinalScore,
-                    Total = a.Exam.TotalMarks,
-                    CanReview = DateTime.Now > a.Exam.EndTime
-                })
                 .ToListAsync();
+
+            var history = attempts
+                .GroupBy(a => a.ExamId)
+                .Select(g => {
+                    var latestAttempt = g.OrderByDescending(a => a.SubmitDate).First();
+                    return new
+                    {
+                        latestAttempt.AttemptId,
+                        ExamTitle = latestAttempt.Exam?.Title ?? "Unknown",
+                        CourseCode = latestAttempt.Exam?.CourseId,
+                        Date = latestAttempt.SubmitDate,
+                        Score = latestAttempt.FinalScore,
+                        Total = latestAttempt.Exam?.TotalMarks ?? 0,
+                        CanReview = latestAttempt.Exam != null && DateTime.Now > latestAttempt.Exam.EndTime
+                    };
+                })
+                .OrderByDescending(h => h.Date)
+                .ToList();
 
             return Ok(history);
         }

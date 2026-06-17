@@ -21,7 +21,6 @@ namespace QuizSmart.API.Controllers
         [HttpGet("exam-stats/{examId}")]
         public async Task<IActionResult> GetExamGeneralStats(int examId)
         {
-
             var attempts = await _context.StudentAttempts
                 .AsNoTracking()
                 .Where(a => a.ExamId == examId && a.SubmitDate != null)
@@ -29,16 +28,22 @@ namespace QuizSmart.API.Controllers
 
             if (!attempts.Any()) return NotFound("لا توجد محاولات مكتملة لهذا الامتحان بعد.");
 
+            // Filter to only the best attempt per student
+            var bestAttempts = attempts
+                .GroupBy(a => a.StudentId)
+                .Select(g => g.OrderByDescending(a => a.FinalScore).First())
+                .ToList();
+
             var exam = await _context.Exams.AsNoTracking().FirstOrDefaultAsync(e => e.ExamId == examId);
             double totalMarks = exam?.TotalMarks ?? 100;
 
             var stats = new
             {
-                TotalParticipants = attempts.Count,
-                AverageScore = Math.Round(attempts.Average(a => a.FinalScore), 2),
-                SuccessCount = attempts.Count(a => a.FinalScore >= (totalMarks / 2)),
-                FailureCount = attempts.Count(a => a.FinalScore < (totalMarks / 2)),
-                SuccessRate = Math.Round((double)attempts.Count(a => a.FinalScore >= (totalMarks / 2)) / attempts.Count * 100, 2)
+                TotalParticipants = bestAttempts.Count,
+                AverageScore = Math.Round(bestAttempts.Average(a => a.FinalScore), 2),
+                SuccessCount = bestAttempts.Count(a => a.FinalScore >= (totalMarks / 2)),
+                FailureCount = bestAttempts.Count(a => a.FinalScore < (totalMarks / 2)),
+                SuccessRate = Math.Round((double)bestAttempts.Count(a => a.FinalScore >= (totalMarks / 2)) / bestAttempts.Count * 100, 2)
             };
 
             return Ok(stats);
@@ -48,19 +53,37 @@ namespace QuizSmart.API.Controllers
         [HttpGet("leaderboard/{examId}")]
         public async Task<IActionResult> GetTopStudents(int examId)
         {
-            var topStudents = await _context.StudentAttempts
+            // Fetch submitted attempts that have NO ungraded written answers into memory
+            var attempts = await _context.StudentAttempts
                 .AsNoTracking()
                 .Where(a => a.ExamId == examId && a.SubmitDate != null)
+                // Exclude students who still have ungraded written questions
+                .Where(a => !_context.StudentAnswers
+                    .Any(sa => sa.AttemptId == a.AttemptId
+                            && sa.QIdNavigation.QType == "Written"
+                            && sa.WrittenMark == null))
                 .Include(a => a.Student)
-                .OrderByDescending(a => a.FinalScore)
-                .Take(10)
-                .Select(a => new
-                {
-                    StudentName = a.Student.FullName,
-                    Score = a.FinalScore,
-                    TimeTaken = Math.Round((a.SubmitDate.Value - a.StartTime).TotalMinutes, 2)
-                })
                 .ToListAsync();
+
+            // Group by student and calculate time in C# memory (EF Core can't translate DateTime math in SQL)
+            var topStudents = attempts
+                .GroupBy(a => new { a.StudentId, StudentName = a.Student?.FullName ?? "Unknown" })
+                .Select(g =>
+                {
+                    var bestAttempt = g.OrderByDescending(a => a.FinalScore).First();
+                    return new
+                    {
+                        StudentName = g.Key.StudentName,
+                        Score = bestAttempt.FinalScore,
+                        TimeTaken = bestAttempt.SubmitDate.HasValue
+                            ? Math.Round((bestAttempt.SubmitDate.Value - bestAttempt.StartTime).TotalMinutes, 2)
+                            : 0
+                    };
+                })
+                .OrderByDescending(s => s.Score)
+                .ThenBy(s => s.TimeTaken)
+                .Take(10)
+                .ToList();
 
             return Ok(topStudents);
         }
@@ -69,20 +92,43 @@ namespace QuizSmart.API.Controllers
         [HttpGet("questions-analysis/{examId}")]
         public async Task<IActionResult> GetQuestionsAnalysis(int examId)
         {
-            var analysis = await _context.StudentAnswers
+            var examQuestions = await _context.ExamQuestions
                 .AsNoTracking()
-                .Include(a => a.Attempt)
-                .Include(a => a.QIdNavigation)
-                .Where(a => a.Attempt.ExamId == examId && a.QIdNavigation.QType == "MCQ")
-                .GroupBy(a => a.QIdNavigation.QText)
-                .Select(g => new
-                {
-                    QuestionText = g.Key,
-                    CorrectCount = g.Count(x => x.IsCorrect == true),
-                    WrongCount = g.Count(x => x.IsCorrect == false),
-                    DifficultyLevel = g.Count(x => x.IsCorrect == false) > g.Count(x => x.IsCorrect == true) ? "صعب" : "سهل"
-                })
+                .Include(eq => eq.Question)
+                .Where(eq => eq.ExamId == examId)
+                .OrderBy(eq => eq.QId)
                 .ToListAsync();
+
+            var attempts = await _context.StudentAttempts
+                .AsNoTracking()
+                .Where(a => a.ExamId == examId && a.SubmitDate != null)
+                .ToListAsync();
+
+            // Filter to only the best attempt's AttemptId per student
+            var bestAttemptIds = attempts
+                .GroupBy(a => a.StudentId)
+                .Select(g => g.OrderByDescending(a => a.FinalScore).First().AttemptId)
+                .ToList();
+
+            var answers = await _context.StudentAnswers
+                .AsNoTracking()
+                .Where(a => bestAttemptIds.Contains(a.AttemptId ?? 0))
+                .ToListAsync();
+
+            var analysis = examQuestions.Select(eq =>
+            {
+                var qAnswers = answers.Where(a => a.QId == eq.QId).ToList();
+                int correctCount = qAnswers.Count(x => x.IsCorrect == true);
+                int wrongCount = qAnswers.Count(x => x.IsCorrect != true);
+
+                return new
+                {
+                    QuestionText = eq.Question?.QText ?? "Unknown Question",
+                    CorrectCount = correctCount,
+                    WrongCount = wrongCount,
+                    DifficultyLevel = wrongCount > correctCount ? "صعب" : "سهل"
+                };
+            }).ToList();
 
             return Ok(analysis);
         }

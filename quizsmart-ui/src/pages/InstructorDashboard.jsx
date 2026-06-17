@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { Container, Nav, Card, Button, Badge, Row, Col, Modal, Form, Dropdown, Table } from 'react-bootstrap';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -79,31 +80,76 @@ const InstructorDashboard = () => {
         } catch (error) { console.error("Error loading history", error); }
     };
 
+    const applyTemplateStyles = (ws, headers, rowCount) => {
+        const colLetters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+        const headerStyle = {
+            font:      { bold: true, color: { rgb: 'FFFFFF' }, sz: 11, name: 'Calibri' },
+            fill:      { fgColor: { rgb: '4F46E5' }, patternType: 'solid' },
+            alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+            border: {
+                top:    { style: 'thin', color: { rgb: 'FFFFFF' } },
+                bottom: { style: 'thin', color: { rgb: 'FFFFFF' } },
+                left:   { style: 'thin', color: { rgb: 'FFFFFF' } },
+                right:  { style: 'thin', color: { rgb: 'FFFFFF' } },
+            }
+        };
+
+        const getDataStyle = (rowIdx) => ({
+            font:      { sz: 10, name: 'Calibri', color: { rgb: '6B7280' }, italic: true },
+            fill:      { fgColor: { rgb: rowIdx % 2 === 0 ? 'F5F3FF' : 'FFFFFF' }, patternType: 'solid' },
+            alignment: { vertical: 'center' },
+            border: {
+                top:    { style: 'hair', color: { rgb: 'C4B5FD' } },
+                bottom: { style: 'hair', color: { rgb: 'C4B5FD' } },
+                left:   { style: 'hair', color: { rgb: 'C4B5FD' } },
+                right:  { style: 'hair', color: { rgb: 'C4B5FD' } },
+            }
+        });
+
+        headers.forEach((_, colIdx) => {
+            const cellRef = `${colLetters[colIdx]}1`;
+            if (ws[cellRef]) ws[cellRef].s = headerStyle;
+        });
+
+        for (let r = 0; r < rowCount; r++) {
+            headers.forEach((_, colIdx) => {
+                const cellRef = `${colLetters[colIdx]}${r + 2}`;
+                if (ws[cellRef]) ws[cellRef].s = getDataStyle(r);
+            });
+        }
+
+        ws['!rows'] = [{ hpt: 22 }, ...Array(rowCount).fill({ hpt: 18 })];
+    };
+
     const handleDownloadTemplate = () => {
-        const BOM = "\uFEFF";
         const headers = [
             "CourseId", "QuestionText", "Type", "Difficulty", "CorrectAnswer",
             "OptionA", "OptionB", "OptionC", "OptionD", "Marks"
         ];
-        const sampleRows = [
-            ["1", "What is the capital of Egypt?", "MCQ", "Easy", "a", "Cairo", "Alexandria", "Giza", "Luxor", "2"],
-            ["1", "The sun rises from the west.", "TrueFalse", "Easy", "False", "", "", "", "", "1"],
-            ["1", "Explain the concept of OOP in detail.", "Written", "Hard", "OOP is a programming paradigm...", "", "", "", "", "5"],
-        ];
 
-        const separator = "\t";
-        let content = headers.join(separator) + "\n";
-        sampleRows.forEach(row => {
-            content += row.join(separator) + "\n";
+        // 5 sample placeholder rows
+        const sampleRows = Array(5).fill(null).map(() => {
+            const row = {};
+            headers.forEach(h => { row[h] = ''; });
+            return row;
         });
 
-        const blob = new Blob([BOM + content], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'QuizSmart_Template.xls';
-        a.click();
-        window.URL.revokeObjectURL(url);
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(sampleRows, { header: headers });
+
+        // Dynamic column widths
+        const colWidths = headers.map(h => ({ wch: Math.max(h.length + 4, 14) }));
+        ws['!cols'] = colWidths;
+
+        // Freeze header row
+        ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft', state: 'frozen' };
+
+        // Apply styles
+        applyTemplateStyles(ws, headers, sampleRows.length);
+
+        XLSX.utils.book_append_sheet(wb, ws, 'Questions Template');
+        XLSX.writeFile(wb, 'QuizSmart_Questions_Template.xlsx');
     };
 
     const handleDeleteQuestion = async (id) => {
@@ -542,11 +588,11 @@ const InstructorDashboard = () => {
                         )}
 
 
-                        <Form.Group className="mb-3">
-                            <Form.Label className="fw-bold small text-danger">
-                                Correct Answer {manualQuestion.qType === 'MCQ' && <span className="text-muted fw-normal">(select the option letter)</span>}
-                            </Form.Label>
-                            {manualQuestion.qType === 'MCQ' ? (
+                        {manualQuestion.qType === 'MCQ' && (
+                            <Form.Group className="mb-3">
+                                <Form.Label className="fw-bold small text-danger">
+                                    Correct Answer <span className="text-muted fw-normal">(select the correct option)</span>
+                                </Form.Label>
                                 <Form.Select
                                     required
                                     value={manualQuestion.correctAns}
@@ -554,19 +600,13 @@ const InstructorDashboard = () => {
                                     className="rounded-3"
                                 >
                                     <option value="">-- Choose Correct Option --</option>
-                                    <option value="a">A</option>
-                                    <option value="b">B</option>
-                                    <option value="c">C</option>
-                                    <option value="d">D</option>
+                                    {manualQuestion.optionA && <option value="a">A: {manualQuestion.optionA}</option>}
+                                    {manualQuestion.optionB && <option value="b">B: {manualQuestion.optionB}</option>}
+                                    {manualQuestion.optionC && <option value="c">C: {manualQuestion.optionC}</option>}
+                                    {manualQuestion.optionD && <option value="d">D: {manualQuestion.optionD}</option>}
                                 </Form.Select>
-                            ) : (
-                                <Form.Control
-                                    required
-                                    placeholder="Enter the correct answer text..."
-                                    onChange={e => setManualQuestion({...manualQuestion, correctAns: e.target.value})}
-                                />
-                            )}
-                        </Form.Group>
+                            </Form.Group>
+                        )}
 
                         <div className="text-end mt-4"><Button type="submit" className="px-5 rounded-pill shadow-sm" style={{ backgroundColor: '#4F46E5', border: 'none' }}>Save to Bank</Button></div>
                     </Form>
@@ -644,11 +684,11 @@ const InstructorDashboard = () => {
                             )}
 
 
-                            <Form.Group className="mb-3">
-                                <Form.Label className="fw-bold small text-danger">
-                                    Correct Answer {editingQuestion.qType === 'MCQ' && <span className="text-muted fw-normal">(select the option letter)</span>}
-                                </Form.Label>
-                                {editingQuestion.qType === 'MCQ' ? (
+                            {editingQuestion.qType === 'MCQ' && (
+                                <Form.Group className="mb-3">
+                                    <Form.Label className="fw-bold small text-danger">
+                                        Correct Answer <span className="text-muted fw-normal">(select the correct option)</span>
+                                    </Form.Label>
                                     <Form.Select
                                         required
                                         value={editingQuestion.correctAns}
@@ -656,19 +696,13 @@ const InstructorDashboard = () => {
                                         className="rounded-3"
                                     >
                                         <option value="">-- Choose Correct Option --</option>
-                                        <option value="a">A</option>
-                                        <option value="b">B</option>
-                                        <option value="c">C</option>
-                                        <option value="d">D</option>
+                                        {editingQuestion.optionA && <option value="a">A: {editingQuestion.optionA}</option>}
+                                        {editingQuestion.optionB && <option value="b">B: {editingQuestion.optionB}</option>}
+                                        {editingQuestion.optionC && <option value="c">C: {editingQuestion.optionC}</option>}
+                                        {editingQuestion.optionD && <option value="d">D: {editingQuestion.optionD}</option>}
                                     </Form.Select>
-                                ) : (
-                                    <Form.Control
-                                        value={editingQuestion.correctAns}
-                                        required
-                                        onChange={e => setEditingQuestion({...editingQuestion, correctAns: e.target.value})}
-                                    />
-                                )}
-                            </Form.Group>
+                                </Form.Group>
+                            )}
 
                             <div className="text-end mt-4">
                                 <Button variant="light" className="me-2 rounded-pill" onClick={() => setShowEditQuestionModal(false)}>Cancel</Button>

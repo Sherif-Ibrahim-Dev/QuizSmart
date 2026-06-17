@@ -360,22 +360,20 @@ const CreateExamForm = () => {
                                     </Row>
                                 </div>
                             )}
-                            <Form.Group className="mb-4">
-                                <Form.Label className="fw-bold small text-danger">
-                                    Correct Answer {editingQuestion.qType === 'MCQ' && <span className="text-muted fw-normal">(option letter)</span>}
-                                </Form.Label>
-                                {editingQuestion.qType === 'MCQ' ? (
+                            {editingQuestion.qType === 'MCQ' && (
+                                <Form.Group className="mb-4">
+                                    <Form.Label className="fw-bold small text-danger">
+                                        Correct Answer <span className="text-muted fw-normal">(select the correct option)</span>
+                                    </Form.Label>
                                     <Form.Select className="custom-input rounded-3 shadow-none" value={editingQuestion.correctAns} onChange={e => setEditingQuestion({...editingQuestion, correctAns: e.target.value})}>
                                         <option value="">-- Choose Correct Option --</option>
-                                        <option value="a">A</option>
-                                        <option value="b">B</option>
-                                        <option value="c">C</option>
-                                        <option value="d">D</option>
+                                        {editingQuestion.optionA && <option value="a">A: {editingQuestion.optionA}</option>}
+                                        {editingQuestion.optionB && <option value="b">B: {editingQuestion.optionB}</option>}
+                                        {editingQuestion.optionC && <option value="c">C: {editingQuestion.optionC}</option>}
+                                        {editingQuestion.optionD && <option value="d">D: {editingQuestion.optionD}</option>}
                                     </Form.Select>
-                                ) : (
-                                    <Form.Control className="custom-input rounded-3 shadow-none" value={editingQuestion.correctAns} onChange={e => setEditingQuestion({...editingQuestion, correctAns: e.target.value})} />
-                                )}
-                            </Form.Group>
+                                </Form.Group>
+                            )}
                             <Button type="submit" className="w-100 py-2 rounded-pill fw-bold shadow-sm" style={{backgroundColor: '#ffc107', border: 'none', color: '#000'}}>
                                 Update & Sync
                             </Button>

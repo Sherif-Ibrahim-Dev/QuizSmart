@@ -47,6 +47,19 @@ const MyCourses = () => {
         }
     };
 
+    const handleUnenroll = async (courseId, courseName) => {
+        if (window.confirm(`Are you sure you want to drop the course "${courseName}"? You will lose access to all related exams and attempts.`)) {
+            try {
+                await studentService.unenrollFromCourse(courseId);
+                loadData();
+                alert(`Successfully dropped the course "${courseName}".`);
+            } catch (err) {
+                const errorMsg = err.response?.data?.message || err.message || "Failed to drop course";
+                alert(errorMsg);
+            }
+        }
+    };
+
     if (loading) {
         return (
             <div className="d-flex justify-content-center align-items-center" style={{ height: '300px' }}>
@@ -104,13 +117,25 @@ const MyCourses = () => {
                                         <h5 className="fw-bold mb-0 text-truncate">{course.courseName}</h5>
                                     </div>
                                 </div>
-                                <Card.Body className="p-4">
-                                    <p className="text-secondary small mb-3" style={{ height: '40px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                        {course.description || "No course description available."}
-                                    </p>
-                                    <div className="d-flex justify-content-between text-muted small fw-bold pt-3 border-top">
-                                        <span>📚 {course.creditHours} Credits</span>
-                                        <span>Year {course.academicYear} - Sem {course.semester}</span>
+                                <Card.Body className="p-4 d-flex flex-column justify-content-between" style={{ minHeight: '170px' }}>
+                                    <div>
+                                        <p className="text-secondary small mb-3" style={{ height: '40px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            {course.description || "No course description available."}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <div className="d-flex justify-content-between text-muted small fw-bold pt-3 border-top mb-3">
+                                            <span>📚 {course.creditHours} Credits</span>
+                                            <span>Year {course.academicYear} - Sem {course.semester}</span>
+                                        </div>
+                                        <Button 
+                                            variant="outline-danger" 
+                                            size="sm" 
+                                            className="w-100 rounded-pill fw-bold transition-all"
+                                            onClick={() => handleUnenroll(course.courseId, course.courseName)}
+                                        >
+                                            Drop Course
+                                        </Button>
                                     </div>
                                 </Card.Body>
                             </Card>

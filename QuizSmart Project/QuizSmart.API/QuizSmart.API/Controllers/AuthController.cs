@@ -80,7 +80,9 @@ namespace QuizSmart.API.Controllers
 
             if (user == null) return NotFound("User not found.");
             if (user.IsVerified) return BadRequest("This account is already verified.");
-            if (user.OtpCode != model.Code) return BadRequest("Invalid verification code.");
+            var cleanDbCode = user.OtpCode?.Replace(" ", "").Trim();
+            var cleanInputCode = model.Code?.Replace(" ", "").Trim();
+            if (cleanDbCode != cleanInputCode) return BadRequest("Invalid verification code.");
 
             user.IsVerified = true;
             user.OtpCode = null;
@@ -110,7 +112,7 @@ namespace QuizSmart.API.Controllers
            new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
            new Claim(ClaimTypes.Role, user.Role),
            new Claim("FullName", user.FullName)
-        }),
+         }),
                 Expires = DateTime.UtcNow.AddDays(7),
                 SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature),
                 Issuer = _config["Jwt:Issuer"],
@@ -126,6 +128,75 @@ namespace QuizSmart.API.Controllers
                 FullName = user.FullName,
                 Role = user.Role
             });
+        }
+
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest model)
+        {
+            var email = model.Email?.Trim().ToLower();
+            if (string.IsNullOrEmpty(email) || !email.EndsWith("@fci.zu.edu.eg"))
+            {
+                return BadRequest("Please use your official university email (@fci.zu.edu.eg).");
+            }
+
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+
+            if (user == null)
+                return NotFound("No account found with this email address.");
+
+            if (!user.IsVerified)
+                return BadRequest("This account has not been verified yet. Please verify your email first.");
+
+            user.OtpCode = new Random().Next(1000, 9999).ToString();
+            await _context.SaveChangesAsync();
+
+            Console.WriteLine($"[Password Reset] OTP for {user.Email} is: {user.OtpCode}");
+
+            return Ok(new { message = "A reset code has been sent. Check the console for your OTP." });
+        }
+
+        [HttpPost("verify-reset-code")]
+        public async Task<IActionResult> VerifyResetCode([FromBody] VerifyResetCodeRequest model)
+        {
+            var email = model.Email?.Trim().ToLower();
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+
+            if (user == null)
+                return NotFound("User not found.");
+
+            if (string.IsNullOrEmpty(user.OtpCode))
+                return BadRequest("No reset code was requested for this account.");
+
+            var cleanDbCode = user.OtpCode?.Replace(" ", "").Trim();
+            var cleanInputCode = model.Code?.Replace(" ", "").Trim();
+            if (cleanDbCode != cleanInputCode)
+                return BadRequest("Invalid reset code. Please try again.");
+
+            return Ok(new { message = "Code verified successfully. You can now set a new password." });
+        }
+
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest model)
+        {
+            var email = model.Email?.Trim().ToLower();
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+
+            if (user == null)
+                return NotFound("User not found.");
+
+            var cleanDbCode = user.OtpCode?.Replace(" ", "").Trim();
+            var cleanInputCode = model.Code?.Replace(" ", "").Trim();
+            if (string.IsNullOrEmpty(cleanDbCode) || cleanDbCode != cleanInputCode)
+                return BadRequest("Invalid or expired reset code.");
+
+            if (string.IsNullOrEmpty(model.NewPassword) || model.NewPassword.Length < 6)
+                return BadRequest("Password must be at least 6 characters long.");
+
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(model.NewPassword);
+            user.OtpCode = null;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Password has been reset successfully! You can now sign in with your new password." });
         }
     }
 
@@ -165,5 +236,25 @@ namespace QuizSmart.API.Controllers
     {
         [Required] public string Email { get; set; } = null!;
         [Required] public string Password { get; set; } = null!;
+    }
+
+    public class ForgotPasswordRequest
+    {
+        [Required, EmailAddress]
+        public string Email { get; set; } = null!;
+    }
+
+    public class VerifyResetCodeRequest
+    {
+        [Required] public string Email { get; set; } = null!;
+        [Required] public string Code { get; set; } = null!;
+    }
+
+    public class ResetPasswordRequest
+    {
+        [Required] public string Email { get; set; } = null!;
+        [Required] public string Code { get; set; } = null!;
+        [Required, StringLength(100, MinimumLength = 6)]
+        public string NewPassword { get; set; } = null!;
     }
 }

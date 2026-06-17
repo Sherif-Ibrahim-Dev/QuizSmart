@@ -13,6 +13,11 @@ const studentService = {
         return response.data;
     },
 
+    unenrollFromCourse: async (courseId) => {
+        const response = await api.post('/Courses/unenroll', { CourseId: courseId });
+        return response.data;
+    },
+
     getAvailableExams: async (studentId) => {
         if (!studentId) return [];
         const response = await api.get(`/StudentDashboard/available-exams/${studentId}`);

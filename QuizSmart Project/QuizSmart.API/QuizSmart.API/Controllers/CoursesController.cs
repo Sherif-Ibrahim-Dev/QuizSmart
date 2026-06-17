@@ -165,6 +165,25 @@ namespace QuizSmart.API.Controllers
             return Ok(new { message = "Enrolled successfully!" });
         }
 
+        [HttpPost("unenroll")]
+        [Authorize(Roles = "Student")]
+        public async Task<IActionResult> UnenrollFromCourse([FromBody] EnrollmentRequest request)
+        {
+            if (request == null || request.CourseId <= 0) return BadRequest(new { message = "Invalid course id." });
+
+            var courseId = request.CourseId;
+            var userId = int.Parse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value!);
+
+            var enrollment = await _context.Enrollments.FirstOrDefaultAsync(e => e.StudentId == userId && e.CourseId == courseId);
+            if (enrollment == null)
+                return BadRequest(new { message = "You are not enrolled in this course." });
+
+            _context.Enrollments.Remove(enrollment);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Unenrolled successfully!" });
+        }
+
         [HttpGet("my-enrolled-courses")]
         [Authorize(Roles = "Student")]
         public async Task<IActionResult> GetMyEnrolledCourses()

@@ -41,7 +41,7 @@ namespace QuizSmart.API.Controllers
             _context.StudentAttempts.Add(request);
             await _context.SaveChangesAsync();
 
-            return Ok(new { message = "Good luck!", attemptId = request.AttemptId });
+            return Ok(new { message = "Good luck!", attemptId = request.AttemptId, startTime = request.StartTime });
         }
 
         [HttpPost("submit-answer")]

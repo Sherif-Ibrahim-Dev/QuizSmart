@@ -171,7 +171,7 @@ const QuestionRenderer = ({
                                                 autoPlay
                                                 playsInline
                                                 className="w-100"
-                                                style={{ maxHeight: '250px', transform: 'scaleX(-1)' }}
+                                                style={{ maxHeight: '250px' }}
                                             />
                                         </div>
                                     ) : (

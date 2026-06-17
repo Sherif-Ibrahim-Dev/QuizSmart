@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { Card, Table, Button, Badge, Spinner, Modal, Form, Row, Col, Alert } from 'react-bootstrap';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import { Bar } from 'react-chartjs-2';
@@ -9,6 +10,24 @@ import {
 } from 'react-icons/fa';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
+
+const wrapText = (text, maxLength = 50) => {
+    if (!text) return [];
+    const words = text.split(' ');
+    const lines = [];
+    let currentLine = '';
+
+    words.forEach(word => {
+        if ((currentLine + ' ' + word).trim().length <= maxLength) {
+            currentLine = (currentLine + ' ' + word).trim();
+        } else {
+            if (currentLine) lines.push(currentLine);
+            currentLine = word;
+        }
+    });
+    if (currentLine) lines.push(currentLine);
+    return lines;
+};
 
 const ExamStatus = () => {
     const [exams, setExams] = useState([]);
@@ -63,24 +82,48 @@ const ExamStatus = () => {
             setQuestionsAnalysis(analysis || []);
 
             if (analysis && analysis.length > 0) {
-                const labels = analysis.map(item =>
-                    item.questionText.length > 25 ? item.questionText.substring(0, 25) + '...' : item.questionText
+                // X-axis: "Q(1)", "Q(2)", ... for a clean histogram look
+                const labels = analysis.map((_, idx) => `Q(${idx + 1})`);
+                // Handle both PascalCase (from .NET) and camelCase
+                const correctCounts = analysis.map(item => item.CorrectCount ?? item.correctCount ?? 0);
+
+                // Map to indices and correct counts to find the lowest two
+                const items = analysis.map((item, idx) => ({
+                    idx,
+                    correctCount: item.CorrectCount ?? item.correctCount ?? 0
+                }));
+
+                // Sort ascending to find the smallest correct counts
+                const sorted = [...items].sort((a, b) => a.correctCount - b.correctCount);
+                // Get the indices of the two lowest questions
+                const lowestIndices = sorted.slice(0, 2).map(x => x.idx);
+
+                // Build dynamic background and border colors
+                const backgroundColors = analysis.map((_, idx) => 
+                    lowestIndices.includes(idx)
+                        ? 'rgba(239, 68, 68, 0.85)'  // Red for lowest 2
+                        : 'rgba(16, 185, 129, 0.85)' // Emerald for others
                 );
-                const correctPercentages = analysis.map(item => {
-                    const total = item.correctCount + item.wrongCount;
-                    return total > 0 ? Math.round((item.correctCount / total) * 100) : 0;
-                });
+                
+                const borderColors = analysis.map((_, idx) => 
+                    lowestIndices.includes(idx)
+                        ? 'rgba(185, 28, 28, 1)'
+                        : 'rgba(5, 150, 105, 1)'
+                );
 
                 setAnalytics({
-                    labels: labels,
-                    datasets: [{
-                        label: 'Correct %',
-                        data: correctPercentages,
-                        backgroundColor: 'rgba(79, 70, 229, 0.6)',
-                        borderColor: 'rgba(79, 70, 229, 1)',
-                        borderWidth: 1,
-                        borderRadius: 8
-                    }]
+                    labels,
+                    datasets: [
+                        {
+                            label: 'Correct Answers',
+                            data: correctCounts,
+                            backgroundColor: backgroundColors,
+                            borderColor: borderColors,
+                            borderWidth: 1.5,
+                            borderRadius: 6,
+                            borderSkipped: false,
+                        }
+                    ]
                 });
             }
         } catch (err) {
@@ -143,31 +186,102 @@ const ExamStatus = () => {
         }
     };
 
+    // ── Shared helper: apply full cell styles to a worksheet ─────────────────────
+    const applyExcelStyles = (ws, headers, rowCount) => {
+        const colLetters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+        // Header style: indigo background (#4F46E5), white bold text, centered, bordered
+        const headerStyle = {
+            font:      { bold: true, color: { rgb: 'FFFFFF' }, sz: 11, name: 'Calibri' },
+            fill:      { fgColor: { rgb: '4F46E5' }, patternType: 'solid' },
+            alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+            border: {
+                top:    { style: 'thin', color: { rgb: 'FFFFFF' } },
+                bottom: { style: 'thin', color: { rgb: 'FFFFFF' } },
+                left:   { style: 'thin', color: { rgb: 'FFFFFF' } },
+                right:  { style: 'thin', color: { rgb: 'FFFFFF' } },
+            }
+        };
+
+        // Data cell style: light border, readable font
+        const getCellStyle = (rowIdx) => ({
+            font:      { sz: 10, name: 'Calibri' },
+            fill:      { fgColor: { rgb: rowIdx % 2 === 0 ? 'F5F3FF' : 'FFFFFF' }, patternType: 'solid' },
+            alignment: { vertical: 'center', wrapText: false },
+            border: {
+                top:    { style: 'hair', color: { rgb: 'C4B5FD' } },
+                bottom: { style: 'hair', color: { rgb: 'C4B5FD' } },
+                left:   { style: 'hair', color: { rgb: 'C4B5FD' } },
+                right:  { style: 'hair', color: { rgb: 'C4B5FD' } },
+            }
+        });
+
+        // Apply header styles (row 1)
+        headers.forEach((_, colIdx) => {
+            const cellRef = `${colLetters[colIdx]}1`;
+            if (ws[cellRef]) ws[cellRef].s = headerStyle;
+        });
+
+        // Apply data row styles
+        for (let r = 0; r < rowCount; r++) {
+            headers.forEach((_, colIdx) => {
+                const cellRef = `${colLetters[colIdx]}${r + 2}`;
+                if (ws[cellRef]) ws[cellRef].s = getCellStyle(r);
+            });
+        }
+
+        // Set row height for header
+        ws['!rows'] = [{ hpt: 22 }, ...Array(rowCount).fill({ hpt: 18 })];
+    };
+
     const handleExportExcel = async (examId, examTitle) => {
         try {
             const data = await examService.getExamResults(examId);
 
-            const headers = ["Student Name", "Email", "Score", "Total Marks", "Percentage", "Status", "Date"];
+            // ── 1. Build the data rows ─────────────────────────────────────────────
+            const headers = ["Student Name", "Email", "Score", "Total Marks", "Percentage", "Status", "Submission Date"];
 
-            const rows = data.map(item => [
-                `"${item.studentName}"`,
-                item.email,
-                item.score,
-                item.totalMarks,
-                `${item.percentage}%`,
-                item.status,
-                item.date
-            ]);
+            const rows = data.map(item => ({
+                "Student Name":    item.studentName  ?? '',
+                "Email":           item.email        ?? '',
+                "Score":           item.score        ?? 0,
+                "Total Marks":     item.totalMarks   ?? 0,
+                "Percentage":      item.percentage   ?? 0,
+                "Status":          item.status       ?? '',
+                "Submission Date": item.date         ?? ''
+            }));
 
-            const csvContent = "\uFEFF" + [headers, ...rows].map(e => e.join(",")).join("\n");
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.setAttribute("href", url);
-            link.setAttribute("download", `Results_${examTitle.replace(/\s+/g, '_')}.csv`);
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            // ── 2. Create workbook & worksheet ────────────────────────────────────
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
+
+            // ── 3. Dynamic column widths ──────────────────────────────────────────
+            const colWidths = headers.map(h => ({ wch: h.length }));
+            rows.forEach(row => {
+                headers.forEach((h, i) => {
+                    const cellVal = row[h] !== null && row[h] !== undefined ? String(row[h]) : '';
+                    if (cellVal.length > colWidths[i].wch) colWidths[i].wch = cellVal.length;
+                });
+            });
+            ws['!cols'] = colWidths.map(c => ({ wch: Math.min(c.wch + 6, 50) }));
+
+            // ── 4. Freeze header row ──────────────────────────────────────────────
+            ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft', state: 'frozen' };
+
+            // ── 5. Percentage column format ───────────────────────────────────────
+            rows.forEach((_, rowIdx) => {
+                const cellRef = `E${rowIdx + 2}`;
+                if (ws[cellRef]) ws[cellRef].z = '0"%"';
+            });
+
+            // ── 6. Apply colors & borders ─────────────────────────────────────────
+            applyExcelStyles(ws, headers, rows.length);
+
+            // ── 7. Save file ──────────────────────────────────────────────────────
+            const safeTitle = examTitle.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_');
+            XLSX.utils.book_append_sheet(wb, ws, 'Results');
+            XLSX.writeFile(wb, `Results_${safeTitle}.xlsx`);
+
         } catch (err) {
             console.error(err);
             alert(err.response?.data?.message || 'No completed attempts found for this exam yet.');
@@ -377,23 +491,151 @@ const ExamStatus = () => {
 
                                 <Col lg={6}>
                                     <Card className="border-0 shadow-sm rounded-4 bg-white h-100">
-                                        <Card.Header className="bg-transparent border-0 pt-4 px-4">
-                                            <h6 className="fw-bold mb-0 text-dark"><FaChartBar className="text-primary me-2" /> Success Rate per Question</h6>
+                                        <Card.Header className="bg-transparent border-0 pt-4 px-4 pb-0">
+                                            <div className="d-flex flex-column flex-sm-row align-items-sm-center justify-content-between gap-2 border-bottom pb-3">
+                                                <div>
+                                                    <h6 className="fw-bold mb-1 text-dark d-flex align-items-center">
+                                                        <FaChartBar className="text-primary me-2" />
+                                                        Correct Answers per Question
+                                                    </h6>
+                                                    <small className="text-muted" style={{ fontSize: '0.75rem' }}>
+                                                        Number of students who answered each question correctly
+                                                    </small>
+                                                </div>
+                                                <div className="d-flex flex-wrap gap-2">
+                                                    <span className="d-flex align-items-center gap-1.5 px-2 py-1 bg-light rounded-3 border" style={{ fontSize: '0.7rem' }}>
+                                                        <span className="d-inline-block rounded-circle" style={{ width: 8, height: 8, backgroundColor: 'rgba(16, 185, 129, 0.85)' }}></span>
+                                                        <span className="text-dark fw-medium">Normal</span>
+                                                    </span>
+                                                    <span className="d-flex align-items-center gap-1.5 px-2 py-1 bg-light rounded-3 border" style={{ fontSize: '0.7rem' }}>
+                                                        <span className="d-inline-block rounded-circle" style={{ width: 8, height: 8, backgroundColor: 'rgba(239, 68, 68, 0.85)' }}></span>
+                                                        <span className="text-dark fw-medium">Lowest 2</span>
+                                                    </span>
+                                                </div>
+                                            </div>
                                         </Card.Header>
                                         <Card.Body className="px-4 pb-4">
                                             {analytics ? (
-                                                <div style={{ height: '280px' }}>
-                                                    <Bar
-                                                        data={analytics}
-                                                        options={{
-                                                            maintainAspectRatio: false,
-                                                            plugins: {
-                                                                legend: { display: false }
-                                                            },
-                                                            scales: { y: { beginAtZero: true, max: 100 } }
-                                                        }}
-                                                    />
-                                                </div>
+                                                <>
+                                                    <div style={{ height: '300px' }}>
+                                                        <Bar
+                                                            data={analytics}
+                                                            options={{
+                                                                maintainAspectRatio: false,
+                                                                responsive: true,
+                                                                plugins: {
+                                                                    legend: {
+                                                                        display: false
+                                                                    },
+                                                                    tooltip: {
+                                                                        backgroundColor: 'rgba(17, 24, 39, 0.92)',
+                                                                        titleFont: { size: 12, weight: 'bold' },
+                                                                        bodyFont: { size: 11 },
+                                                                        padding: 10,
+                                                                        cornerRadius: 8,
+                                                                        callbacks: {
+                                                                            title: (tooltipItems) => {
+                                                                                if (!tooltipItems || tooltipItems.length === 0) return '';
+                                                                                const idx = tooltipItems[0].dataIndex;
+                                                                                const qText = questionsAnalysis[idx]?.QuestionText ?? questionsAnalysis[idx]?.questionText ?? '';
+                                                                                return [`Question Q(${idx + 1}):`, ...wrapText(qText, 55)];
+                                                                            },
+                                                                            label: (ctx) => ` Correct Answers: ${ctx.raw} student(s)`
+                                                                        }
+                                                                    },
+                                                                    datalabels: { display: false }
+                                                                },
+                                                                scales: {
+                                                                    x: {
+                                                                        grid: { display: false },
+                                                                        ticks: {
+                                                                            font: { size: 10, family: 'Inter, sans-serif' },
+                                                                            color: '#6B7280',
+                                                                            maxRotation: 30
+                                                                        },
+                                                                        title: {
+                                                                            display: true,
+                                                                            text: 'Question Number',
+                                                                            font: { size: 11, weight: '600' },
+                                                                            color: '#6B7280',
+                                                                            padding: { top: 8 }
+                                                                        }
+                                                                    },
+                                                                    y: {
+                                                                        beginAtZero: true,
+                                                                        grid: { color: 'rgba(156,163,175,0.2)', drawBorder: false },
+                                                                        ticks: {
+                                                                            stepSize: 1,
+                                                                            font: { size: 10, family: 'Inter, sans-serif' },
+                                                                            color: '#6B7280'
+                                                                        },
+                                                                        title: {
+                                                                            display: true,
+                                                                            text: 'Number of Students',
+                                                                            font: { size: 11, weight: '600' },
+                                                                            color: '#6B7280',
+                                                                            padding: { bottom: 8 }
+                                                                        }
+                                                                    }
+                                                                },
+                                                                barPercentage: 0.65,
+                                                                categoryPercentage: 0.75,
+                                                                animation: { duration: 600, easing: 'easeOutQuart' }
+                                                            }}
+                                                        />
+                                                    </div>
+
+                                                    {/* Most Missed Questions Section */}
+                                                    {questionsAnalysis.length > 0 && (() => {
+                                                        const mostMissed = questionsAnalysis
+                                                            .map((q, idx) => ({
+                                                                ...q,
+                                                                originalIndex: idx + 1,
+                                                                // Handle both PascalCase (.NET) and camelCase
+                                                                _wrongCount: q.WrongCount ?? q.wrongCount ?? 0,
+                                                                _questionText: q.QuestionText ?? q.questionText ?? ''
+                                                            }))
+                                                            .filter(q => q._wrongCount > 0)
+                                                            .sort((a, b) => b._wrongCount - a._wrongCount)
+                                                            .slice(0, 2);
+
+                                                        if (mostMissed.length === 0) return null;
+
+                                                        return (
+                                                            <div className="mt-4 pt-3" style={{ borderTop: '1px solid #E5E7EB' }}>
+                                                                <h6 className="fw-bold text-danger mb-3" style={{ fontSize: '0.85rem' }}>
+                                                                    <FaTimesCircle className="me-2" />
+                                                                    Most Missed Questions
+                                                                </h6>
+                                                                {mostMissed.map((q, i) => (
+                                                                    <div
+                                                                        key={i}
+                                                                        className="d-flex align-items-start mb-2 p-2 rounded-3"
+                                                                        style={{ backgroundColor: i === 0 ? '#FEF2F2' : '#FFF7ED', border: `1px solid ${i === 0 ? '#FECACA' : '#FED7AA'}` }}
+                                                                    >
+                                                                        <Badge
+                                                                            bg={i === 0 ? 'danger' : 'warning'}
+                                                                            className="me-2 mt-1"
+                                                                            style={{ fontSize: '0.7rem', minWidth: '42px' }}
+                                                                        >
+                                                                            Q({q.originalIndex})
+                                                                        </Badge>
+                                                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                                                            <p className="mb-0 text-dark" style={{ fontSize: '0.8rem', lineHeight: '1.4' }}>
+                                                                                {q._questionText && q._questionText.length > 100
+                                                                                    ? q._questionText.substring(0, 100) + '...'
+                                                                                    : q._questionText}
+                                                                            </p>
+                                                                            <small className="text-danger fw-bold">
+                                                                                {q._wrongCount} student{q._wrongCount !== 1 ? 's' : ''} answered incorrectly
+                                                                            </small>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        );
+                                                    })()}
+                                                </>
                                             ) : (
                                                 <p className="text-muted text-center py-5 small">Not enough data to generate question chart analysis.</p>
                                             )}

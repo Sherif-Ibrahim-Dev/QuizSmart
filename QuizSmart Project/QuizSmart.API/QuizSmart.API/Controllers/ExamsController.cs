@@ -37,7 +37,7 @@ namespace QuizSmart.API.Controllers
                     e.EndTime,
                     e.DurationInMinutes,
                     e.IsPublished,
-                    AttemptsCount = e.StudentAttempts.Count(),
+                    AttemptsCount = e.StudentAttempts.Select(a => a.StudentId).Distinct().Count(),
 
                     HasPendingCorrections = _context.StudentAnswers
                         .Any(sa => sa.Attempt.ExamId == e.ExamId &&

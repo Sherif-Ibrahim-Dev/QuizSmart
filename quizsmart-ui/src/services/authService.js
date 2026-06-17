@@ -50,10 +50,43 @@ const getCurrentUser = () => {
     return userData ? JSON.parse(userData) : null;
 };
 
+const forgotPassword = async (email) => {
+    try {
+        const response = await axios.post(`${API_BASE_URL}/Auth/forgot-password`, { email });
+        return response.data;
+    } catch (error) {
+        const message = error.response?.data || "Failed to send reset code.";
+        throw (typeof message === 'object' ? JSON.stringify(message) : message);
+    }
+};
+
+const verifyResetCode = async (email, code) => {
+    try {
+        const response = await axios.post(`${API_BASE_URL}/Auth/verify-reset-code`, { email, code });
+        return response.data;
+    } catch (error) {
+        const message = error.response?.data || "Invalid reset code.";
+        throw (typeof message === 'object' ? JSON.stringify(message) : message);
+    }
+};
+
+const resetPassword = async (email, code, newPassword) => {
+    try {
+        const response = await axios.post(`${API_BASE_URL}/Auth/reset-password`, { email, code, newPassword });
+        return response.data;
+    } catch (error) {
+        const message = error.response?.data || "Failed to reset password.";
+        throw (typeof message === 'object' ? JSON.stringify(message) : message);
+    }
+};
+
 export default {
     login,
     register,
     verifyEmail,
     logout,
-    getCurrentUser
+    getCurrentUser,
+    forgotPassword,
+    verifyResetCode,
+    resetPassword
 };

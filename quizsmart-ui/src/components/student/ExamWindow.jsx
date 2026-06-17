@@ -46,13 +46,19 @@ const ExamWindow = () => {
                 const activeExam = available.find(e => e.examId === parseInt(examId));
 
                 let currentAttemptId = null;
+                let dbStartTime = null;
 
                 if (activeExam && activeExam.hasStarted && activeExam.attemptId) {
+                    // Resuming an existing attempt - startTime is when the attempt was first created
                     currentAttemptId = activeExam.attemptId;
+                    // Estimate start time from duration and end time remaining
+                    dbStartTime = null; // will fall back to current time for resumed attempts
                 } else {
                     try {
                         const startRes = await studentService.startAttempt(parseInt(examId));
                         currentAttemptId = startRes.attemptId;
+                        // Use real DB start time returned from the server
+                        dbStartTime = startRes.startTime || null;
                     } catch (startErr) {
                         console.error("Attempt start failed. Trying to fetch existing details.", startErr);
                         const retryAvailable = await studentService.getAvailableExams(user.userId);
@@ -81,9 +87,9 @@ const ExamWindow = () => {
                 });
                 setAnswersState(initialState);
 
-                setAttemptStartTime(new Date().toISOString());
+                // Use real DB startTime for accurate TimeTaken calculation; fallback to now
+                setAttemptStartTime(dbStartTime || new Date().toISOString());
 
-                const courses = await studentService.getAllCourses();
                 const defaultDuration = activeExam?.durationInMinutes || 60;
                 setExam({
                     title: activeExam?.title || "Course Final Exam",
@@ -97,6 +103,7 @@ const ExamWindow = () => {
                 navigate('/student-dashboard');
             }
         };
+
 
         initializeExam();
     }, [examId]);
@@ -218,13 +225,20 @@ const ExamWindow = () => {
 
     const startCamera = async () => {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            // Try rear camera first (for mobile users photographing handwritten solutions)
+            let stream;
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } } });
+            } catch {
+                // Fallback to any available camera (desktop users)
+                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            }
             videoRef.current.srcObject = stream;
             streamRef.current = stream;
             setCameraActive(true);
         } catch (err) {
-            console.error("Failed to open webcam", err);
-            alert("Webcam access is required for written questions!");
+            console.error("Failed to open camera", err);
+            alert("Camera access is required for written questions!");
         }
     };
 
@@ -252,8 +266,6 @@ const ExamWindow = () => {
         canvas.width = videoRef.current.videoWidth;
         canvas.height = videoRef.current.videoHeight;
         const ctx = canvas.getContext('2d');
-        ctx.translate(canvas.width, 0);
-        ctx.scale(-1, 1);
         ctx.drawImage(videoRef.current, 0, 0);
 
         const dataUrl = canvas.toDataURL('image/jpeg');
@@ -411,20 +423,12 @@ const ExamWindow = () => {
                         <h4 className="fw-bold mb-1 text-dark text-truncate">{exam.title}</h4>
                         <span className="text-muted fw-semibold small">FCI_Zagazig University Testing Service</span>
                     </Col>
-                    <Col xs={12} md={6} className="d-flex justify-content-md-end mt-2 mt-md-0 gap-3">
+                    <Col xs={12} md={6} className="d-flex justify-content-md-end mt-2 mt-md-0">
                         <ExamTimer
                             startTime={attemptStartTime}
                             durationInMinutes={exam.durationInMinutes}
                             onTimeUp={handleTimeUp}
                         />
-                        <Button
-                            variant="danger"
-                            className="rounded-pill fw-bold shadow-sm px-4 d-flex align-items-center gap-2"
-                            onClick={() => setShowConfirmSubmit(true)}
-                        >
-                            <FaPaperPlane />
-                            Submit
-                        </Button>
                     </Col>
                 </Row>
 
