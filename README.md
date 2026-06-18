@@ -35,7 +35,7 @@
 - **Course Enrollment** — Browse and enroll in available courses
 - **Exam Portal** — Secure, timed exam environment with question navigator
 - **Anti-Cheat System** — Tab-switch detection, right-click blocking, copy-paste prevention
-- **Handwriting Capture** — Webcam-based solution upload for written questions with 60-second minimum timer
+- **Handwriting Capture** — Webcam-based solution upload for written questions
 - **Auto-Submit** — Automatic submission when time expires
 - **Grades & Progress** — Track scores, view attempt history, and review detailed answer breakdowns
 - **Resume Capability** — Resume interrupted exam sessions
@@ -76,16 +76,16 @@ QuizSmart_Project/
 │   │   └── main.jsx
 │   └── package.json
 │
-└── QuizSmart Project/             # .NET Backend
-    └── QuizSmart.API/
-        └── QuizSmart.API/
-            ├── Controllers/       # API endpoints
-            ├── Models/            # EF Core entities & DbContext
-            ├── DTOs/              # Data transfer objects
-            ├── Services/          # Business logic services
-            ├── Middlewares/       # Custom middleware
-            ├── Migrations/        # Database migrations
-            └── Program.cs         # Application entry point
+└── QuizSmart.API/                 # .NET Backend (Flattened)
+    ├── Controllers/               # API endpoints
+    ├── Models/                    # EF Core entities & DbContext
+    ├── DTOs/                      # Data transfer objects
+    ├── Services/                  # Business logic services
+    ├── Middlewares/               # Custom middleware
+    ├── Migrations/                # Database migrations
+    ├── Program.cs                 # Application entry point
+    ├── QuizSmart.API.csproj       # Project configuration
+    └── QuizSmart.API.sln          # Solution file
 ```
 
 ---
@@ -99,7 +99,7 @@ QuizSmart_Project/
 
 ### Backend Setup
 ```bash
-cd "QuizSmart Project/QuizSmart.API/QuizSmart.API"
+cd QuizSmart.API
 dotnet restore
 dotnet ef database update
 dotnet run
