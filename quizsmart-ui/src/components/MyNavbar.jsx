@@ -3,18 +3,19 @@ import { Navbar, Nav, Container, Button, Dropdown } from 'react-bootstrap';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import quizLogo from '../assets/logo.png';
+import { useAuth } from '../context/AuthContext';
 
 const MyNavbar = () => {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const user = JSON.parse(localStorage.getItem('user') || 'null');
+  const { user, logout } = useAuth();
 
   if (pathname.startsWith('/exam/')) {
     return null;
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('user');
+  const handleLogout = async () => {
+    await logout(); // revokes refresh token cookie on the server
     navigate('/login');
   };
 

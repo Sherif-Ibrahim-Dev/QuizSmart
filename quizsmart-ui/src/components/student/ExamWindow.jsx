@@ -33,6 +33,9 @@ const ExamWindow = () => {
 
     const videoRef = useRef(null);
     const streamRef = useRef(null);
+    const tabTimeoutRef = useRef(null);
+    const leaveTimeRef = useRef(null);
+    const debounceTimerRef = useRef({});
 
     useEffect(() => {
         if (!user || !examId) {
@@ -76,12 +79,24 @@ const ExamWindow = () => {
                 const questionsData = await studentService.getExamQuestions(examId);
                 setQuestions(questionsData);
 
+                const cacheKey = `exam_answers_${user.userId}_${examId}`;
+                const cachedAnswers = localStorage.getItem(cacheKey);
+                let parsedCache = null;
+                if (cachedAnswers) {
+                    try {
+                        parsedCache = JSON.parse(cachedAnswers);
+                    } catch (e) {
+                        console.error("Failed to parse cached answers", e);
+                    }
+                }
+
                 const initialState = {};
                 questionsData.forEach(q => {
+                    const cachedQ = parsedCache ? parsedCache[q.qId] : null;
                     initialState[q.qId] = {
                         ansId: q.ansId,
-                        chosenOption: q.chosenOption || '',
-                        isFlagged: q.isFlagged || false,
+                        chosenOption: (cachedQ && cachedQ.chosenOption) ? cachedQ.chosenOption : (q.chosenOption || ''),
+                        isFlagged: (cachedQ && cachedQ.isFlagged !== undefined) ? cachedQ.isFlagged : (q.isFlagged || false),
                         questionStartTime: q.questionStartTime ? new Date(q.questionStartTime) : null
                     };
                 });
@@ -109,16 +124,62 @@ const ExamWindow = () => {
     }, [examId]);
 
     useEffect(() => {
+        if (loading || !attemptId || !user) return;
+        const cacheKey = `exam_answers_${user.userId}_${examId}`;
+        localStorage.setItem(cacheKey, JSON.stringify(answersState));
+    }, [answersState, loading, attemptId]);
+
+    const triggerAutoSubmitDueToTabSwitch = async () => {
+        try {
+            setExamLocked(true);
+            const currentQ = questions[currentIndex];
+            if (currentQ && currentQ.qType === 'Written') {
+                if (debounceTimerRef.current[currentQ.qId]) {
+                    clearTimeout(debounceTimerRef.current[currentQ.qId]);
+                }
+                await syncWrittenTextAnswer(currentQ.qId);
+            }
+
+            const result = await studentService.finishAttempt(attemptId);
+            setFinalResult({
+                score: result.score,
+                total: questions.reduce((sum, q) => sum + q.marks, 0),
+                message: "Exam submitted automatically due to switching tabs.",
+                isTabLocked: true
+            });
+            setExamFinished(true);
+            clearCache();
+            alert("🚨 EXAM SUBMITTED: You switched tabs and did not return within 5 seconds. Your exam has been automatically submitted.");
+        } catch (e) {
+            console.error("Error auto-submitting on tab switch", e);
+        }
+    };
+
+    useEffect(() => {
         if (loading || examFinished || examLocked) return;
 
         const handleVisibilityChange = async () => {
             if (document.hidden) {
-                if (cheatWarningCount === 0) {
-                    setCheatWarningCount(1);
-                    alert("⚠️ WARNING: You left the exam tab! Leaving the tab again will automatically lock your exam and submit with a score of 0.");
-                } else {
-                    setExamLocked(true);
-                    await triggerCheatingFailure();
+                // User switched tabs - start 5-second timer
+                leaveTimeRef.current = Date.now();
+                tabTimeoutRef.current = setTimeout(async () => {
+                    await triggerAutoSubmitDueToTabSwitch();
+                }, 5000);
+            } else {
+                // User returned to tab
+                if (leaveTimeRef.current) {
+                    const timeAway = (Date.now() - leaveTimeRef.current) / 1000;
+                    clearTimeout(tabTimeoutRef.current);
+                    tabTimeoutRef.current = null;
+
+                    if (timeAway >= 5) {
+                        // Stayed away for 5 seconds or more - auto submit
+                        await triggerAutoSubmitDueToTabSwitch();
+                    } else {
+                        // Returned in time - show warning warning
+                        alert("⚠️ WARNING: You left the exam tab! If you leave the tab and do not return within 5 seconds, your exam will be automatically submitted.");
+                    }
+                    leaveTimeRef.current = null;
                 }
             }
         };
@@ -139,19 +200,12 @@ const ExamWindow = () => {
             document.removeEventListener("visibilitychange", handleVisibilityChange);
             document.removeEventListener("contextmenu", preventRightClick);
             document.removeEventListener("keydown", preventKeyboard);
+            if (tabTimeoutRef.current) {
+                clearTimeout(tabTimeoutRef.current);
+            }
+            Object.values(debounceTimerRef.current).forEach(timer => clearTimeout(timer));
         };
-    }, [loading, cheatWarningCount, examFinished, examLocked]);
-
-    const triggerCheatingFailure = async () => {
-        try {
-            alert("🚨 EXAM LOCKED: Multiple tab switches detected. Your attempt is auto-submitted with 0 marks.");
-            await studentService.finishAttempt(attemptId);
-            setExamFinished(true);
-            setFinalResult({ score: 0, total: 100, message: "Cheating Suspected - Locked" });
-        } catch (e) {
-            console.error("Error submitting failure", e);
-        }
-    };
+    }, [loading, examFinished, examLocked, currentIndex, questions, attemptId]);
 
     useEffect(() => {
         if (loading || questions.length === 0 || currentIndex === null) return;
@@ -191,7 +245,9 @@ const ExamWindow = () => {
         }));
 
         const currentQ = questions.find(q => q.qId === qId);
-        if (currentQ && currentQ.qType !== 'Written') {
+        if (!currentQ) return;
+
+        if (currentQ.qType !== 'Written') {
             try {
                 await studentService.submitAnswer({
                     attemptId: attemptId,
@@ -200,6 +256,23 @@ const ExamWindow = () => {
                 });
             } catch (err) {
                 console.error("Failed to auto-submit answer to server", err);
+            }
+        } else {
+            // For Written questions, debounce the API call to save text answer in real-time
+            const ansId = answersState[qId]?.ansId;
+            if (ansId) {
+                if (debounceTimerRef.current[qId]) {
+                    clearTimeout(debounceTimerRef.current[qId]);
+                }
+                debounceTimerRef.current[qId] = setTimeout(async () => {
+                    const formData = new FormData();
+                    formData.append('textAnswer', value || '');
+                    try {
+                        await studentService.submitWrittenAnswer(ansId, formData);
+                    } catch (err) {
+                        console.error("Failed to auto-save written text answer", err);
+                    }
+                }, 1500); // 1.5 second debounce
             }
         }
     };
@@ -253,14 +326,6 @@ const ExamWindow = () => {
     const takePhoto = () => {
         const currentQ = questions[currentIndex];
         const state = answersState[currentQ.qId];
-
-        if (state.questionStartTime) {
-            const timeDiffSec = (new Date().getTime() - new Date(state.questionStartTime).getTime()) / 1000;
-            if (timeDiffSec < 60) {
-                alert(`⚠️ ANTI-CHEAT ALERT:\nYou cannot upload a solution in less than 60 seconds. You have spent ${Math.floor(timeDiffSec)} seconds on this question. Please spend at least 1 minute working before uploading.`);
-                return;
-            }
-        }
 
         const canvas = document.createElement('canvas');
         canvas.width = videoRef.current.videoWidth;
@@ -343,12 +408,22 @@ const ExamWindow = () => {
         }
     };
 
+    const clearCache = () => {
+        if (user) {
+            const cacheKey = `exam_answers_${user.userId}_${examId}`;
+            localStorage.removeItem(cacheKey);
+        }
+    };
+
     const handleFinalSubmit = async () => {
         setSubmitting(true);
         setShowConfirmSubmit(false);
 
         const currentQ = questions[currentIndex];
-        if (currentQ.qType === 'Written') {
+        if (currentQ && currentQ.qType === 'Written') {
+            if (debounceTimerRef.current[currentQ.qId]) {
+                clearTimeout(debounceTimerRef.current[currentQ.qId]);
+            }
             await syncWrittenTextAnswer(currentQ.qId);
         }
 
@@ -360,6 +435,7 @@ const ExamWindow = () => {
                 message: "Exam Finished successfully!"
             });
             setExamFinished(true);
+            clearCache();
         } catch (err) {
             console.error("Failed to submit exam", err);
             alert("Error submitting. Please try again.");
@@ -383,6 +459,10 @@ const ExamWindow = () => {
     }
 
     if (examFinished) {
+        const hasWrittenQuestions = questions.some(q => q.qType === 'Written');
+        const mcqQuestions = questions.filter(q => q.qType === 'MCQ' || q.qType === 'TrueFalse');
+        const totalMCQMarks = mcqQuestions.reduce((sum, q) => sum + q.marks, 0);
+
         return (
             <Container className="py-5 max-w-600">
                 <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center p-5 bg-white shadow rounded-5 mt-5">
@@ -392,15 +472,37 @@ const ExamWindow = () => {
                     <h2 className="fw-bold mb-3">Congratulations!</h2>
                     <p className="text-secondary lead mb-4">You have successfully submitted the exam: <br/><strong className="text-dark">{exam.title}</strong></p>
 
-                    {finalResult && (
-                        <Card className="border-0 bg-light p-4 rounded-4 mb-4 text-center">
-                            <h5 className="text-secondary mb-1">MOCK EVALUATION (MCQ ONLY)</h5>
-                            <h1 className="fw-bold text-primary mb-0">{finalResult.score} / {finalResult.total}</h1>
-                            <small className="text-muted">Written questions are pending manual correction by the instructor.</small>
-                        </Card>
+                    {finalResult && finalResult.isTabLocked && (
+                        <div className="alert alert-danger rounded-4 mb-3 text-start small">
+                            <strong>Notice:</strong> The exam has been closed and submitted automatically because you switched tabs for more than 5 seconds.
+                        </div>
                     )}
 
-                    <Button variant="primary" className="px-5 py-3 rounded-pill fw-bold" onClick={() => navigate('/student-dashboard')}>
+                    {finalResult && (
+                        hasWrittenQuestions ? (
+                            <Card className="border-0 bg-light p-4 rounded-4 mb-4 text-center shadow-sm">
+                                <h5 className="text-secondary mb-1 fw-bold">RESULT BREAKDOWN</h5>
+                                <h2 className="fw-bold text-primary mb-2">
+                                    MCQ Score: {finalResult.score} / {totalMCQMarks}
+                                </h2>
+                                <hr className="my-3" />
+                                <div className="alert alert-info rounded-4 mb-0 text-start">
+                                    <h6 className="fw-bold mb-1">Important Notice:</h6>
+                                    <span className="small">
+                                        You scored {finalResult.score} / {totalMCQMarks} in the multiple-choice section. The written essay portion is currently pending correction by the instructor. Your final cumulative score will be updated on your student dashboard once grading is complete.
+                                    </span>
+                                </div>
+                            </Card>
+                        ) : (
+                            <Card className="border-0 bg-light p-4 rounded-4 mb-4 text-center shadow-sm">
+                                <h5 className="text-secondary mb-1 fw-bold">FINAL SCORE</h5>
+                                <h1 className="fw-bold text-success mb-0">{finalResult.score} / {finalResult.total}</h1>
+                                <p className="text-muted small mt-2 mb-0">Your exam has been fully evaluated.</p>
+                            </Card>
+                        )
+                    )}
+
+                    <Button variant="primary" className="px-5 py-3 rounded-pill fw-bold shadow-sm" onClick={() => navigate('/student-dashboard')} style={{ backgroundColor: '#4F46E5', borderColor: '#4F46E5' }}>
                         Return to Dashboard
                     </Button>
                 </motion.div>

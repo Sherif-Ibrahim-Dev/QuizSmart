@@ -70,9 +70,13 @@ namespace QuizSmart.API.Controllers
 
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
             var questionsList = new List<QuestionBank>();
+            var skippedRows = new List<string>();
 
             try
             {
+                // Pre-load all courses for case-insensitive CourseCode lookup
+                var allCourses = await _context.Courses.ToListAsync();
+
                 using (var stream = file.OpenReadStream())
                 {
                     using (var reader = file.FileName.EndsWith(".csv")
@@ -85,20 +89,48 @@ namespace QuizSmart.API.Controllers
                             currentRow++;
                             var cell0 = reader.GetValue(0)?.ToString()?.Trim();
 
-                            if (string.IsNullOrEmpty(cell0) || cell0.StartsWith("sep=") || cell0.Equals("CourseId", StringComparison.OrdinalIgnoreCase))
+                            // Skip empty rows, CSV separator rows, and header row (case-insensitive, both old & new format)
+                            if (string.IsNullOrEmpty(cell0) || cell0.StartsWith("sep=") || cell0.Equals("CourseCode", StringComparison.OrdinalIgnoreCase) || cell0.Equals("CourseId", StringComparison.OrdinalIgnoreCase))
                                 continue;
 
-                            if (!int.TryParse(cell0, out int cId))
+                            // Case-insensitive CourseCode lookup
+                            var matchedCourse = allCourses.FirstOrDefault(c =>
+                                c.CourseCode.Equals(cell0, StringComparison.OrdinalIgnoreCase));
+
+                            if (matchedCourse == null)
                             {
-                                return BadRequest(new { message = $"Row {currentRow}: CourseId must be a valid integer." });
+                                // Course code not found — skip this row silently
+                                skippedRows.Add($"Row {currentRow}: CourseCode '{cell0}' not found — skipped.");
+                                continue;
                             }
 
                             var type = reader.GetValue(2)?.ToString()?.Trim() ?? "MCQ";
                             var correct = reader.GetValue(4)?.ToString()?.Trim() ?? "";
 
-                            if (type.Equals("TrueFalse", StringComparison.OrdinalIgnoreCase))
+                            // Normalize Difficulty (case-insensitive)
+                            var rawDifficulty = reader.GetValue(3)?.ToString()?.Trim() ?? "Medium";
+                            string difficulty;
+                            if (rawDifficulty.Equals("Easy", StringComparison.OrdinalIgnoreCase))
+                                difficulty = "Easy";
+                            else if (rawDifficulty.Equals("Hard", StringComparison.OrdinalIgnoreCase))
+                                difficulty = "Hard";
+                            else
+                                difficulty = "Medium";
+
+                            // Normalize Type (case-insensitive)
+                            string normalizedType;
+                            if (type.Equals("MCQ", StringComparison.OrdinalIgnoreCase))
+                                normalizedType = "MCQ";
+                            else if (type.Equals("TrueFalse", StringComparison.OrdinalIgnoreCase) || type.Equals("True/False", StringComparison.OrdinalIgnoreCase))
+                                normalizedType = "TrueFalse";
+                            else if (type.Equals("Written", StringComparison.OrdinalIgnoreCase))
+                                normalizedType = "Written";
+                            else
+                                normalizedType = "MCQ";
+
+                            if (normalizedType == "TrueFalse" && !string.IsNullOrEmpty(correct))
                             {
-                                if (correct.ToLower().StartsWith("t") || correct == "1" || correct.ToLower() == "true")
+                                if (correct.ToLower().StartsWith("t") || correct == "1" || correct.Equals("true", StringComparison.OrdinalIgnoreCase))
                                     correct = "True";
                                 else
                                     correct = "False";
@@ -106,17 +138,17 @@ namespace QuizSmart.API.Controllers
 
                             questionsList.Add(new QuestionBank
                             {
-                                CourseId = cId,
+                                CourseId = matchedCourse.CourseId,
                                 QText = reader.GetValue(1)?.ToString() ?? "No Text Provided",
-                                QType = type,
-                                Difficulty = reader.GetValue(3)?.ToString() ?? "Medium",
-                                CorrectAns = correct,
+                                QType = normalizedType,
+                                Difficulty = difficulty,
+                                CorrectAns = string.IsNullOrWhiteSpace(correct) ? null : correct,
 
-                                OptionA = type == "TrueFalse" ? "True" : (reader.FieldCount > 5 ? reader.GetValue(5)?.ToString() : null),
-                                OptionB = type == "TrueFalse" ? "False" : (reader.FieldCount > 6 ? reader.GetValue(6)?.ToString() : null),
+                                OptionA = normalizedType == "TrueFalse" ? "True" : (reader.FieldCount > 5 ? reader.GetValue(5)?.ToString() : null),
+                                OptionB = normalizedType == "TrueFalse" ? "False" : (reader.FieldCount > 6 ? reader.GetValue(6)?.ToString() : null),
 
-                                OptionC = (type == "TrueFalse" || type == "Written") ? null : (reader.FieldCount > 7 ? reader.GetValue(7)?.ToString() : null),
-                                OptionD = (type == "TrueFalse" || type == "Written") ? null : (reader.FieldCount > 8 ? reader.GetValue(8)?.ToString() : null),
+                                OptionC = (normalizedType == "TrueFalse" || normalizedType == "Written") ? null : (reader.FieldCount > 7 ? reader.GetValue(7)?.ToString() : null),
+                                OptionD = (normalizedType == "TrueFalse" || normalizedType == "Written") ? null : (reader.FieldCount > 8 ? reader.GetValue(8)?.ToString() : null),
 
                                 Marks = (reader.FieldCount > 9 && int.TryParse(reader.GetValue(9)?.ToString(), out int m)) ? m : 1
                             });
@@ -124,13 +156,20 @@ namespace QuizSmart.API.Controllers
                     }
                 }
 
-                if (questionsList.Count == 0)
+                if (questionsList.Count == 0 && skippedRows.Count == 0)
                     return BadRequest(new { message = "No valid questions found in the file." });
+
+                if (questionsList.Count == 0 && skippedRows.Count > 0)
+                    return BadRequest(new { message = "All questions were skipped due to invalid Course Codes.", skippedDetails = skippedRows });
 
                 _context.QuestionBanks.AddRange(questionsList);
                 await _context.SaveChangesAsync();
 
-                return Ok(new { message = $"Successfully uploaded {questionsList.Count} questions!" });
+                var resultMessage = $"Successfully uploaded {questionsList.Count} question(s)!";
+                if (skippedRows.Count > 0)
+                    resultMessage += $" ({skippedRows.Count} row(s) skipped due to invalid Course Codes)";
+
+                return Ok(new { message = resultMessage, added = questionsList.Count, skipped = skippedRows.Count, skippedDetails = skippedRows });
             }
             catch (Exception ex)
             {

@@ -23,6 +23,7 @@ public partial class QuizSmartDbContext : DbContext
     public virtual DbSet<StudentAttempt> StudentAttempts { get; set; }
     public virtual DbSet<User> Users { get; set; }
     public virtual DbSet<Enrollment> Enrollments { get; set; }
+    public virtual DbSet<RefreshToken> RefreshTokens { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -171,6 +172,35 @@ public partial class QuizSmartDbContext : DbContext
             entity.Property(e => e.UniversityId).HasMaxLength(50).IsUnicode(false).HasColumnName("university_id");
             entity.Property(e => e.IsVerified).HasColumnName("is_verified").HasDefaultValue(false);
             entity.Property(e => e.OtpCode).HasMaxLength(10).IsUnicode(false).HasColumnName("otp_code");
+        });
+
+        modelBuilder.Entity<RefreshToken>(entity =>
+        {
+            entity.ToTable("RefreshTokens");
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.TokenHash)
+                  .HasMaxLength(64)
+                  .IsUnicode(false)
+                  .IsRequired();
+
+            entity.Property(e => e.ReplacedByToken)
+                  .HasMaxLength(64)
+                  .IsUnicode(false);
+
+            entity.Property(e => e.CreatedByIp).HasMaxLength(45).IsUnicode(false);
+            entity.Property(e => e.RevokedByIp).HasMaxLength(45).IsUnicode(false);
+
+            // Unique index for fast token lookup by hash
+            entity.HasIndex(e => e.TokenHash).IsUnique();
+
+            // Composite index for querying active tokens per user
+            entity.HasIndex(e => new { e.UserId, e.RevokedAt });
+
+            entity.HasOne(e => e.User)
+                  .WithMany(u => u.RefreshTokens)
+                  .HasForeignKey(e => e.UserId)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
 
         OnModelCreatingPartial(modelBuilder);

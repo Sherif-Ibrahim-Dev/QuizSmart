@@ -30,4 +30,5 @@ public partial class User
     public virtual ICollection<Course> Courses { get; set; } = new List<Course>();
     public virtual ICollection<StudentAttempt> StudentAttempts { get; set; } = new List<StudentAttempt>();
     public virtual ICollection<Enrollment> Enrollments { get; set; } = new List<Enrollment>();
+    public virtual ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
 }

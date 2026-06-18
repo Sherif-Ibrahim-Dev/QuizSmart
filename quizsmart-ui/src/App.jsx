@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { Spinner } from 'react-bootstrap';
 import MyNavbar from './components/MyNavbar';
 import LoginPage from './pages/LoginPage';
 import StudentDashboard from './pages/StudentDashboard';
@@ -8,9 +9,19 @@ import InstructorDashboard from './pages/InstructorDashboard';
 import ExamWindow from './components/student/ExamWindow';
 import quizLogo from './assets/logo.png';
 import { FaGraduationCap, FaClipboardCheck, FaChartLine, FaShieldAlt, FaRandom, FaBolt } from 'react-icons/fa';
+import { AuthProvider, useAuth } from './context/AuthContext';
 
 const ProtectedRoute = ({ children }) => {
-  const user = localStorage.getItem('user');
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#04030D' }}>
+        <Spinner animation="border" style={{ color: '#818CF8', width: '3rem', height: '3rem' }} />
+      </div>
+    );
+  }
+
   if (!user) return <Navigate to="/login" replace />;
   return children;
 };
@@ -390,27 +401,25 @@ const Home = () => {
 
 function App() {
   return (
-    <Router>
-      <div className="app-main">
-        <MyNavbar />
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/login" element={<LoginPage />} />
+    <AuthProvider>
+      <Router>
+        <div className="app-main">
+          <MyNavbar />
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/login" element={<LoginPage />} />
 
+            <Route path="/student-dashboard" element={<ProtectedRoute><StudentDashboard /></ProtectedRoute>} />
 
-          <Route path="/student-dashboard" element={<ProtectedRoute><StudentDashboard /></ProtectedRoute>} />
+            <Route path="/instructor-dashboard" element={<ProtectedRoute><InstructorDashboard /></ProtectedRoute>} />
 
+            <Route path="/exam/:examId" element={<ProtectedRoute><ExamWindow /></ProtectedRoute>} />
 
-          <Route path="/instructor-dashboard" element={<ProtectedRoute><InstructorDashboard /></ProtectedRoute>} />
-
-
-          <Route path="/exam/:examId" element={<ProtectedRoute><ExamWindow /></ProtectedRoute>} />
-
-
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </div>
-    </Router>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </div>
+      </Router>
+    </AuthProvider>
   );
 }
 

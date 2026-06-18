@@ -195,10 +195,7 @@ const QuestionRenderer = ({
                                 </div>
                             )}
 
-                            <div className="text-muted small mt-2 d-flex align-items-center justify-content-center gap-2 text-warning fw-semibold">
-                                <FaExclamationTriangle />
-                                <span>Anti-cheat notice: Images captured in under 60 seconds are automatically rejected.</span>
-                            </div>
+                            {/* Removed visible anti-cheat warning per request */}
                         </Card>
                     </div>
                 )}

@@ -212,7 +212,12 @@ namespace QuizSmart.API.Controllers
                     sa.IsCorrect,
                     sa.WrittenMark,
                     MaxMarks = sa.QIdNavigation != null ? sa.QIdNavigation.Marks : 0,
-                    QType = sa.QIdNavigation != null ? sa.QIdNavigation.QType : ""
+                    QType = sa.QIdNavigation != null ? sa.QIdNavigation.QType : "",
+                    CorrectAnswer = sa.QIdNavigation != null ? sa.QIdNavigation.CorrectAns : null,
+                    OptionA = sa.QIdNavigation != null ? sa.QIdNavigation.OptionA : null,
+                    OptionB = sa.QIdNavigation != null ? sa.QIdNavigation.OptionB : null,
+                    OptionC = sa.QIdNavigation != null ? sa.QIdNavigation.OptionC : null,
+                    OptionD = sa.QIdNavigation != null ? sa.QIdNavigation.OptionD : null
                 })
             });
         }

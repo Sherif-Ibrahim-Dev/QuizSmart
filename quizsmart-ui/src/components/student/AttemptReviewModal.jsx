@@ -81,6 +81,21 @@ const AttemptReviewModal = ({ show, onHide, attemptId, examTitle }) => {
                                         statusText = 'Incorrect Answer';
                                     }
 
+                                    let options = [];
+                                    if (ans.qType === 'MCQ') {
+                                        options = [
+                                            { label: 'A', text: ans.optionA },
+                                            { label: 'B', text: ans.optionB },
+                                            { label: 'C', text: ans.optionC },
+                                            { label: 'D', text: ans.optionD }
+                                        ].filter(o => o.text);
+                                    } else if (ans.qType === 'TrueFalse') {
+                                        options = [
+                                            { label: 'T', text: 'True' },
+                                            { label: 'F', text: 'False' }
+                                        ];
+                                    }
+
                                     return (
                                         <Card
                                             key={idx}
@@ -104,13 +119,86 @@ const AttemptReviewModal = ({ show, onHide, attemptId, examTitle }) => {
                                                         </Badge>
                                                     </div>
                                                 </div>
-                                                <div className="p-3 bg-light rounded-3 d-flex align-items-center gap-3 border border-light">
-                                                    {statusIcon}
-                                                    <div>
-                                                        <small className="text-muted d-block fw-bold small">YOUR RESPONSE:</small>
-                                                        <span className="fw-semibold text-dark">{ans.studentAnswer || "No answer provided"}</span>
+
+                                                {ans.qType !== "Written" ? (
+                                                    <div className="d-flex flex-column gap-2 mb-2 mt-3">
+                                                        <small className="text-muted fw-bold mb-1">OPTIONS & EVALUATION:</small>
+                                                        {options.map((opt) => {
+                                                            const isCorrectOption = ans.correctAnswer?.trim().toLowerCase() === opt.text?.trim().toLowerCase();
+                                                            const isSelectedOption = ans.studentAnswer?.trim().toLowerCase() === opt.text?.trim().toLowerCase();
+
+                                                            let optBg = '#fff';
+                                                            let optBorder = '#E2E8F0';
+                                                            let optTextColor = '#1E293B';
+                                                            let optIcon = null;
+
+                                                            if (isCorrectOption) {
+                                                                optBg = '#ECFDF5';
+                                                                optBorder = '#10B981';
+                                                                optTextColor = '#065F46';
+                                                                optIcon = <FaCheckCircle className="text-success ms-auto fs-5" />;
+                                                            } else if (isSelectedOption) {
+                                                                optBg = '#FEF2F2';
+                                                                optBorder = '#EF4444';
+                                                                optTextColor = '#991B1B';
+                                                                optIcon = <FaTimesCircle className="text-danger ms-auto fs-5" />;
+                                                            }
+
+                                                            return (
+                                                                <div
+                                                                    key={opt.label}
+                                                                    className="p-3 rounded-4 border d-flex align-items-center gap-3 transition-all"
+                                                                    style={{
+                                                                        backgroundColor: optBg,
+                                                                        borderColor: optBorder,
+                                                                        borderWidth: '2px',
+                                                                        color: optTextColor
+                                                                    }}
+                                                                >
+                                                                    <div
+                                                                        className="d-flex align-items-center justify-content-center fw-bold rounded-circle"
+                                                                        style={{
+                                                                            width: '28px',
+                                                                            height: '28px',
+                                                                            backgroundColor: isCorrectOption ? '#10B981' : (isSelectedOption ? '#EF4444' : '#EEF2F6'),
+                                                                            color: isCorrectOption || isSelectedOption ? '#fff' : '#4F46E5',
+                                                                            fontSize: '14px'
+                                                                        }}
+                                                                    >
+                                                                        {opt.label}
+                                                                    </div>
+                                                                    <span className="fw-semibold flex-grow-1">{opt.text}</span>
+                                                                    {optIcon}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                        <div className="p-3 bg-light rounded-3 d-flex align-items-center gap-3 border border-light mt-2">
+                                                            {statusIcon}
+                                                            <div>
+                                                                <small className="text-muted d-block fw-bold small">YOUR RESPONSE:</small>
+                                                                <span className="fw-semibold text-dark">{ans.studentAnswer || "No answer provided"}</span>
+                                                            </div>
+                                                        </div>
                                                     </div>
-                                                </div>
+                                                ) : (
+                                                    <div className="mt-3 p-3 bg-light rounded-4 border border-light">
+                                                        <div>
+                                                            <small className="text-muted d-block fw-bold small">YOUR WRITTEN RESPONSE:</small>
+                                                            <span className="fw-semibold text-dark text-break">{ans.studentAnswer || "No answer provided"}</span>
+                                                        </div>
+                                                        <hr className="my-2 border-secondary opacity-25" />
+                                                        <div className="d-flex align-items-center gap-2 text-indigo">
+                                                            <FaAward />
+                                                            <span className="fw-bold">
+                                                                {ans.isCorrect === null ? (
+                                                                    <span className="text-warning">درجة المصحح: قيد التقييم (Pending Instructor Grade)</span>
+                                                                ) : (
+                                                                    <span className="text-success">درجة المصحح: {ans.writtenMark} من {ans.maxMarks} (Instructor Grade: {ans.writtenMark} / {ans.maxMarks})</span>
+                                                                )}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </Card.Body>
                                         </Card>
                                     );

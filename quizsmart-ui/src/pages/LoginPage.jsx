@@ -4,6 +4,7 @@ import { Form, Button, Card, Container, Row, Col, ToggleButton, ButtonGroup, Ale
 import { useNavigate } from 'react-router-dom';
 import { FaEye, FaEyeSlash, FaArrowLeft, FaLock, FaEnvelope, FaKey, FaCheckCircle } from 'react-icons/fa';
 import authService from '../services/authService';
+import { useAuth } from '../context/AuthContext';
 import quizLogo from '../assets/logo.png';
 
 // Password input with toggle (defined outside AuthPage to prevent re-creation and focus loss)
@@ -34,6 +35,7 @@ const PasswordField = ({ name, placeholder, value, onChange, show, onToggle, cla
 
 const AuthPage = () => {
     const navigate = useNavigate();
+    const { user, login } = useAuth();
     const [isLogin, setIsLogin] = useState(true);
     const [role, setRole] = useState('Student');
     const [showVerify, setShowVerify] = useState(false);
@@ -58,21 +60,16 @@ const AuthPage = () => {
     const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
     const [forgotSuccess, setForgotSuccess] = useState(false);
 
+    // Redirect if already authenticated (e.g. back-button after login)
     useEffect(() => {
-        const existingUser = localStorage.getItem('user');
-        if (existingUser) {
-            try {
-                const parsed = JSON.parse(existingUser);
-                if (parsed?.role === 'Student') {
-                    navigate('/student-dashboard', { replace: true });
-                } else if (parsed?.role === 'Instructor') {
-                    navigate('/instructor-dashboard', { replace: true });
-                }
-            } catch {
-                localStorage.removeItem('user');
+        if (user) {
+            if (user.role === 'Student') {
+                navigate('/student-dashboard', { replace: true });
+            } else if (user.role === 'Instructor') {
+                navigate('/instructor-dashboard', { replace: true });
             }
         }
-    }, [navigate]);
+    }, [user, navigate]);
 
     const handleInputChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
 
@@ -112,7 +109,8 @@ const AuthPage = () => {
 
         try {
             if (isLogin) {
-                const result = await authService.login(trimmedEmail, formData.password);
+                // Use context's login() — stores accessToken in memory, user info in localStorage
+                const result = await login(trimmedEmail, formData.password);
                 if (result.role === 'Student') navigate('/student-dashboard');
                 else navigate('/instructor-dashboard');
             } else {

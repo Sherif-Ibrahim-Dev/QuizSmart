@@ -20,7 +20,6 @@ namespace QuizSmart.API.Models
 
         public string? Difficulty { get; set; }
 
-        [Required]
         public string? CorrectAns { get; set; }
 
         public int Marks { get; set; } = 1;

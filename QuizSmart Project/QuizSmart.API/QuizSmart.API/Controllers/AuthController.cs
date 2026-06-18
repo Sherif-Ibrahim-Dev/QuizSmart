@@ -1,10 +1,11 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using QuizSmart.API.Models;
-using System.ComponentModel.DataAnnotations;
-using System.Text;
-using System.IdentityModel.Tokens.Jwt;
 using Microsoft.IdentityModel.Tokens;
+using QuizSmart.API.DTOs;
+using QuizSmart.API.Models;
+using QuizSmart.API.Services;
+using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 
 namespace QuizSmart.API.Controllers
@@ -15,17 +16,28 @@ namespace QuizSmart.API.Controllers
     {
         private readonly QuizSmartDbContext _context;
         private readonly IConfiguration _config;
+        private readonly ITokenService _tokenService;
 
-        public AuthController(QuizSmartDbContext context, IConfiguration config)
+        // Cookie name for the HttpOnly refresh token
+        private const string RefreshTokenCookieName = "quizsmart_rt";
+
+        public AuthController(
+            QuizSmartDbContext context,
+            IConfiguration config,
+            ITokenService tokenService)
         {
             _context = context;
             _config = config;
+            _tokenService = tokenService;
         }
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // EXISTING ENDPOINTS — No breaking changes
+        // ══════════════════════════════════════════════════════════════════════════
 
         [HttpPost("register")]
         public async Task<IActionResult> Register(RegisterDto model)
         {
-
             if (!model.Email.ToLower().EndsWith("@fci.zu.edu.eg"))
             {
                 return BadRequest("Registration is only available for Faculty of Computers and Information, Zagazig University members.");
@@ -89,45 +101,6 @@ namespace QuizSmart.API.Controllers
             await _context.SaveChangesAsync();
 
             return Ok(new { message = "Account verified successfully!" });
-        }
-
-        [HttpPost("login")]
-        public async Task<IActionResult> Login([FromBody] LoginRequest model)
-        {
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == model.Email);
-
-            if (user == null || !BCrypt.Net.BCrypt.Verify(model.Password, user.PasswordHash))
-            {
-                return Unauthorized("Invalid email or password.");
-            }
-
-            if (!user.IsVerified) return BadRequest("Please verify your account before logging in.");
-
-            var tokenHandler = new JwtSecurityTokenHandler();
-            var key = Encoding.UTF8.GetBytes(_config["Jwt:Key"]!);
-            var tokenDescriptor = new SecurityTokenDescriptor
-            {
-                Subject = new ClaimsIdentity(new[]
-                {
-           new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
-           new Claim(ClaimTypes.Role, user.Role),
-           new Claim("FullName", user.FullName)
-         }),
-                Expires = DateTime.UtcNow.AddDays(7),
-                SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature),
-                Issuer = _config["Jwt:Issuer"],
-                Audience = _config["Jwt:Audience"]
-            };
-
-            var token = tokenHandler.CreateToken(tokenDescriptor);
-
-            return Ok(new
-            {
-                Token = tokenHandler.WriteToken(token),
-                UserId = user.UserId,
-                FullName = user.FullName,
-                Role = user.Role
-            });
         }
 
         [HttpPost("forgot-password")]
@@ -198,8 +171,165 @@ namespace QuizSmart.API.Controllers
 
             return Ok(new { message = "Password has been reset successfully! You can now sign in with your new password." });
         }
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // NEW / UPDATED ENDPOINTS — Refresh Token Architecture
+        // ══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// POST /api/auth/login
+        /// Returns a short-lived access token in JSON and a rotating refresh token
+        /// in a secure HttpOnly cookie.
+        /// </summary>
+        [HttpPost("login")]
+        public async Task<IActionResult> Login([FromBody] LoginRequest model)
+        {
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == model.Email);
+
+            if (user == null || !BCrypt.Net.BCrypt.Verify(model.Password, user.PasswordHash))
+                return Unauthorized("Invalid email or password.");
+
+            if (!user.IsVerified)
+                return BadRequest("Please verify your account before logging in.");
+
+            // Generate access token (15 min)
+            var (accessToken, expiresAt) = _tokenService.GenerateAccessToken(user);
+
+            // Generate refresh token and store its hash in DB
+            var (plainRefreshToken, tokenHash) = _tokenService.GenerateRefreshToken();
+            var expiryDays = int.Parse(_config["Jwt:RefreshTokenExpiryDays"] ?? "7");
+
+            _context.RefreshTokens.Add(new RefreshToken
+            {
+                UserId = user.UserId,
+                TokenHash = tokenHash,
+                CreatedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddDays(expiryDays),
+                CreatedByIp = GetClientIp()
+            });
+            await _context.SaveChangesAsync();
+
+            // Set refresh token as HttpOnly secure cookie
+            SetRefreshTokenCookie(plainRefreshToken, expiryDays);
+
+            return Ok(new LoginResponse
+            {
+                AccessToken = accessToken,
+                ExpiresAt = expiresAt,
+                UserId = user.UserId,
+                FullName = user.FullName,
+                Role = user.Role
+            });
+        }
+
+        /// <summary>
+        /// POST /api/auth/refresh
+        /// Reads the refresh token from the HttpOnly cookie, validates it,
+        /// rotates it, and returns a new access token.
+        /// </summary>
+        [HttpPost("refresh")]
+        public async Task<IActionResult> Refresh()
+        {
+            var plainToken = Request.Cookies[RefreshTokenCookieName];
+            if (string.IsNullOrEmpty(plainToken))
+                return Unauthorized("No refresh token provided.");
+
+            try
+            {
+                var (user, newPlainToken) = await _tokenService.ValidateAndRotateRefreshTokenAsync(
+                    plainToken, GetClientIp());
+
+                var (accessToken, expiresAt) = _tokenService.GenerateAccessToken(user);
+                var expiryDays = int.Parse(_config["Jwt:RefreshTokenExpiryDays"] ?? "7");
+
+                SetRefreshTokenCookie(newPlainToken, expiryDays);
+
+                return Ok(new RefreshResponse
+                {
+                    AccessToken = accessToken,
+                    ExpiresAt = expiresAt
+                });
+            }
+            catch (SecurityTokenException ex)
+            {
+                // Clear the cookie on any token error (invalid / reuse attack)
+                ClearRefreshTokenCookie();
+                return Unauthorized(ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// POST /api/auth/logout
+        /// Revokes the current device's refresh token and clears the cookie.
+        /// </summary>
+        [HttpPost("logout")]
+        public async Task<IActionResult> Logout()
+        {
+            var plainToken = Request.Cookies[RefreshTokenCookieName];
+            if (!string.IsNullOrEmpty(plainToken))
+            {
+                await _tokenService.RevokeRefreshTokenAsync(plainToken, GetClientIp());
+            }
+
+            ClearRefreshTokenCookie();
+            return Ok(new { message = "Logged out successfully." });
+        }
+
+        /// <summary>
+        /// POST /api/auth/revoke-all
+        /// Revokes ALL active sessions for the authenticated user (logout from all devices).
+        /// Requires a valid access token.
+        /// </summary>
+        [Authorize]
+        [HttpPost("revoke-all")]
+        public async Task<IActionResult> RevokeAll()
+        {
+            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!int.TryParse(userIdClaim, out var userId))
+                return Unauthorized();
+
+            await _tokenService.RevokeAllUserTokensAsync(userId, GetClientIp());
+            await _context.SaveChangesAsync();
+
+            ClearRefreshTokenCookie();
+            return Ok(new { message = "All sessions have been revoked." });
+        }
+
+        // ── Private Helpers ────────────────────────────────────────────────────────
+
+        private void SetRefreshTokenCookie(string plainToken, int expiryDays)
+        {
+            Response.Cookies.Append(RefreshTokenCookieName, plainToken, new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.Strict,
+                Expires = DateTimeOffset.UtcNow.AddDays(expiryDays),
+                Path = "/api/auth" // Scope cookie only to auth endpoints
+            });
+        }
+
+        private void ClearRefreshTokenCookie()
+        {
+            Response.Cookies.Append(RefreshTokenCookieName, "", new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.Strict,
+                Expires = DateTimeOffset.UtcNow.AddDays(-1),
+                Path = "/api/auth"
+            });
+        }
+
+        private string GetClientIp()
+        {
+            return HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════════
+    // DTOs & Enums — Kept here for backward compatibility with existing code
+    // ══════════════════════════════════════════════════════════════════════════════
 
     public enum AcademicLevel
     {

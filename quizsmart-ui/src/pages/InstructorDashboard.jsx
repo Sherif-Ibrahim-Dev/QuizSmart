@@ -124,19 +124,59 @@ const InstructorDashboard = () => {
 
     const handleDownloadTemplate = () => {
         const headers = [
-            "CourseId", "QuestionText", "Type", "Difficulty", "CorrectAnswer",
+            "CourseCode", "QuestionText", "Type", "Difficulty", "CorrectAnswer",
             "OptionA", "OptionB", "OptionC", "OptionD", "Marks"
         ];
 
-        // 5 sample placeholder rows
-        const sampleRows = Array(5).fill(null).map(() => {
+        // Sample data rows demonstrating all question types
+        const sampleData = [
+            {
+                "CourseCode": "CS101",
+                "QuestionText": "What is the time complexity of binary search?",
+                "Type": "MCQ",
+                "Difficulty": "Medium",
+                "CorrectAnswer": "b",
+                "OptionA": "O(n)",
+                "OptionB": "O(log n)",
+                "OptionC": "O(n²)",
+                "OptionD": "O(1)",
+                "Marks": 2
+            },
+            {
+                "CourseCode": "CS101",
+                "QuestionText": "Explain the concept of polymorphism in OOP.",
+                "Type": "Written",
+                "Difficulty": "Hard",
+                "CorrectAnswer": "",
+                "OptionA": "",
+                "OptionB": "",
+                "OptionC": "",
+                "OptionD": "",
+                "Marks": 5
+            },
+            {
+                "CourseCode": "CS101",
+                "QuestionText": "An array is a linear data structure.",
+                "Type": "TrueFalse",
+                "Difficulty": "Easy",
+                "CorrectAnswer": "True",
+                "OptionA": "",
+                "OptionB": "",
+                "OptionC": "",
+                "OptionD": "",
+                "Marks": 1
+            }
+        ];
+
+        // Add 2 empty rows for the instructor to fill in
+        for (let i = 0; i < 2; i++) {
             const row = {};
             headers.forEach(h => { row[h] = ''; });
-            return row;
-        });
+            sampleData.push(row);
+        }
 
         const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.json_to_sheet(sampleRows, { header: headers });
+        const ws = XLSX.utils.json_to_sheet(sampleData, { header: headers });
 
         // Dynamic column widths
         const colWidths = headers.map(h => ({ wch: Math.max(h.length + 4, 14) }));
@@ -146,9 +186,23 @@ const InstructorDashboard = () => {
         ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft', state: 'frozen' };
 
         // Apply styles
-        applyTemplateStyles(ws, headers, sampleRows.length);
+        applyTemplateStyles(ws, headers, sampleData.length);
+
+        // Add instructions sheet
+        const instructionsData = [
+            { "Column": "CourseCode", "Description": "Course code (e.g. CS101). Case-insensitive — 'cs101', 'CS101', 'Cs101' all work. Must match an existing course." },
+            { "Column": "QuestionText", "Description": "The question text (required)." },
+            { "Column": "Type", "Description": "MCQ, Written, or TrueFalse. Case-insensitive — 'mcq', 'MCQ', 'Mcq' all work." },
+            { "Column": "Difficulty", "Description": "Easy, Medium, or Hard. Case-insensitive — 'easy', 'EASY', 'EaSy' all work." },
+            { "Column": "CorrectAnswer", "Description": "For MCQ: a, b, c, or d. For TrueFalse: True/False. For Written: leave empty." },
+            { "Column": "OptionA-D", "Description": "MCQ choices. Leave empty for Written questions. Auto-filled for TrueFalse." },
+            { "Column": "Marks", "Description": "Points for this question (default: 1)." },
+        ];
+        const wsInstructions = XLSX.utils.json_to_sheet(instructionsData);
+        wsInstructions['!cols'] = [{ wch: 18 }, { wch: 80 }];
 
         XLSX.utils.book_append_sheet(wb, ws, 'Questions Template');
+        XLSX.utils.book_append_sheet(wb, wsInstructions, 'Instructions');
         XLSX.writeFile(wb, 'QuizSmart_Questions_Template.xlsx');
     };
 
@@ -239,12 +293,27 @@ const InstructorDashboard = () => {
         if (!file) return;
         try {
             const result = await questionService.uploadExcel(file);
-            const msg = result?.message || "Excel data imported successfully!";
+            let msg = result?.message || "Excel data imported successfully!";
+
+            // Show skipped details if any rows were skipped
+            if (result?.skipped > 0 && result?.skippedDetails?.length > 0) {
+                const skippedInfo = result.skippedDetails.join('\n');
+                msg += `\n\n⚠️ Skipped rows:\n${skippedInfo}`;
+            }
+
             alert(`✅ ${msg}`);
             loadQuestions(selectedCourseId);
             loadExcelHistory(selectedCourseId);
         } catch (error) {
-            const errMsg = error.response?.data?.message || "Upload failed. Please check your file format.";
+            const errData = error.response?.data;
+            let errMsg = errData?.message || "Upload failed. Please check your file format.";
+
+            // Show skipped details on error too (e.g., all rows were invalid)
+            if (errData?.skippedDetails?.length > 0) {
+                const skippedInfo = errData.skippedDetails.join('\n');
+                errMsg += `\n\n⚠️ Skipped rows:\n${skippedInfo}`;
+            }
+
             alert(`❌ ${errMsg}`);
         }
         const fileInput = document.getElementById('excelFile');
